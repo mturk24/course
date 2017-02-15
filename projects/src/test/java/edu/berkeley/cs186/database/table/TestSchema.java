@@ -16,7 +16,7 @@ public class TestSchema {
 
 
 
-  
+
   @Test
   @Category(StudentTest.class)
   public void testToStringFieldsAndSizes() {

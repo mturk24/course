@@ -162,7 +162,6 @@ public class Table implements Iterable<Record>, Closeable {
     int writePosition = 0;
     int found = 0;
     int pageNum;
-
     try {
       Record newRecord = this.schema.verify(values);
       if (!this.freePages.isEmpty()) {
@@ -172,6 +171,7 @@ public class Table implements Iterable<Record>, Closeable {
         pageNum = this.allocator.allocPage();
         page = this.allocator.fetchPage(pageNum);
         flag = true;
+        found = 1;
       }
       int currIndex = 0;
       byte[] slot = this.readPageHeader(page);
@@ -184,8 +184,7 @@ public class Table implements Iterable<Record>, Closeable {
       this.writeBitToHeader(page, writePosition, (byte) 1);
       if (this.spaceOnPage(page) == true && flag) {
         this.freePages.add(page.getPageNum());
-      }
-      if (this.spaceOnPage(page) == false && !flag) {
+      } else if (this.spaceOnPage(page) == false && !flag) {
         this.freePages.remove(page.getPageNum());
       }
       RecordID newID = new RecordID(pageNum, writePosition);
@@ -195,25 +194,26 @@ public class Table implements Iterable<Record>, Closeable {
     }
   }
 
+
   /**
    * Helper method to find the first available bit
    */
   public int findBit(byte[] slot, int currIndex, int writePosition) {
-    while (currIndex < this.pageHeaderSize) {
+    while (this.pageHeaderSize > currIndex) {
       if (slot[currIndex] != -1) {
-        for (int entry = 0; entry < 8; ++entry) {
+        for (int entry = 0; entry <= 7; entry++) {
           byte b = slot[currIndex];
-          int offsetByte;
-          offsetByte = 7 - (entry % 8);
-          byte mask = (byte) (1 << offsetByte);
-          byte value = (byte) (b & mask);
+          int offset = 7 - (entry % 8);
+          byte bitMask = (byte) (1 << offset);
+          byte value = (byte) (b & bitMask);
           if (value == 0) {
             writePosition = entry + (8 * currIndex);
             break;
           }
         }
         break;
-      } else {
+      }
+      else {
         currIndex += 1;
       }
     }
