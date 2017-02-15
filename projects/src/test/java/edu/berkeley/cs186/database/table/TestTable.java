@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Iterator;
 import java.io.IOException;
+import java.util.NoSuchElementException;
 
 import static org.junit.Assert.*;
 
@@ -390,5 +391,95 @@ public class TestTable {
     }
     assertFalse(iRec.hasNext());
   }
+
+
+
+  @Test(expected= NoSuchElementException.class)
+  @Category(StudentTest.class)
+  public void testBadIter() {
+    Iterator<Record> iter = table.iterator();
+    iter.next();
+  }
+
+  @Test(expected=DatabaseException.class)
+  @Category(StudentTest.class)
+  public void throwBadUpdateAndID() throws Exception {
+    Record input = TestUtils.createRecordWithAllTypes();
+    RecordID recId = table.addRecord(input.getValues());
+    input.getValues().get(1).setInt(19);
+    table.updateRecord(input.getValues(), new RecordID(2, 1));
+  }
+
+
+  @Test(expected= DatabaseException.class)
+  @Category(StudentTest.class)
+  public void testIncorrectSchema() throws Exception {
+    List<DataBox> values = new ArrayList<DataBox>();
+    values.add(new StringDataBox("abwdg", 5));
+    values.add(new IntDataBox(11));
+    values.add(new StringDataBox("dbcfdw", 6));
+    values.add(new IntDataBox(2992));
+
+    table.addRecord(values);
+  }
+
+  @Test
+  @Category(StudentTest.class)
+  public void testIterAdd() throws Exception {
+    Record input = TestUtils.createRecordWithAllTypes();
+    Iterator<Record> iter = table.iterator();
+    table.addRecord(input.getValues());
+    assertFalse(iter.hasNext() == true);
+  }
+
+  @Test(expected=DatabaseException.class)
+  @Category(StudentTest.class)
+  public void throwBadDeletion() throws Exception {
+    table.deleteRecord(new RecordID(2, 0));
+  }
+
+  @Test(expected=DatabaseException.class)
+  @Category(StudentTest.class)
+  public void badUpdate() throws DatabaseException {
+    Record input = TestUtils.createRecordWithAllTypes();
+    RecordID recId = table.addRecord(input.getValues());
+    Schema schema = TestUtils.createSchemaWithAllTypes();
+    table.updateRecord(input.getValues(), null);
+  }
+
+
+  @Test
+  @Category(StudentTest.class)
+  public void testSimpleIter() throws DatabaseException {
+    Record input = TestUtils.createRecordWithAllTypes();
+    RecordID[] recordIds = new RecordID[1000];
+    for (int i = 0; i < 1000; i++) {
+      recordIds[i] = table.addRecord(input.getValues());
+    }
+    for (int i = 0; i < 500; i += 1) {
+      table.deleteRecord(recordIds[i]);
+    }
+    Iterator<Record> iRec = table.iterator();
+    for (int i = 0; i < 500; i += 1) {
+      assertTrue(iRec.hasNext());
+      assertEquals(input, iRec.next());
+    }
+    assertFalse(iRec.hasNext());
+  }
+
+//  @Test()
+//  @Category(StudentTest.class)
+//  public void testTableGet() throws DatabaseException {
+//  Record input = TestUtils.createRecordWithAllTypes();
+//  RecordID[] recordIds = new RecordID[1000];
+
+//  @Test
+//  @Category(StudentTest.class)
+//  public void testSpace() {
+//
+//  }
+
+
+
 
 }

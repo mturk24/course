@@ -2,10 +2,16 @@ package edu.berkeley.cs186.database.table;
 
 import edu.berkeley.cs186.database.databox.*;
 
+
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+
+import static edu.berkeley.cs186.database.databox.DataBox.Types.*;
 
 /**
  * The Schema of a particular table.
@@ -44,7 +50,18 @@ public class Schema {
    */
   public Record verify(List<DataBox> values) throws SchemaException {
     // TODO: implement me!
-    return null;
+    if (values.size() != fields.size()) {
+      throw new SchemaException("Values don't conform to this Schema");
+    }
+    for (int i = 0; i < values.size(); i++) {
+      if ((values.get(i).type() != fieldTypes.get(i).type()) || (values.get(i).getSize() != fieldTypes.get(i).getSize())) {
+        throw new SchemaException("Values don't conform to this Schema");
+      }
+    }
+    Record verifiedRecord = new Record(values);
+    return verifiedRecord;
+//
+
   }
 
   /**
@@ -58,7 +75,21 @@ public class Schema {
    */
   public byte[] encode(Record record) {
     // TODO: implement me!
-    return null;
+//    ByteArrayOutputStream myStream = new ByteArrayOutputStream( );
+//    for (DataBox d : record.getValues()) {
+//      myStream.write(d.getBytes());
+//    }
+//    return myStream.toByteArray();
+    int newSize = 0;
+    for (DataBox d : record.getValues()) {
+      newSize += d.getBytes().length;
+    }
+    ByteBuffer buffer = ByteBuffer.allocate(newSize);
+    for (DataBox d : record.getValues()) {
+      buffer.put(d.getBytes());
+    }
+    return buffer.array();
+
   }
 
   /**
@@ -70,7 +101,39 @@ public class Schema {
    */
   public Record decode(byte[] input) {
     // TODO: implement me!
-    return null;
+    int currentSize = 0;
+    List <DataBox> myList = new ArrayList<DataBox>();
+
+//      for (DataBox d : getFieldTypes()) {
+//        System.out.println(d);
+    System.out.println("look right above");
+    for (DataBox d : fieldTypes) {
+      byte[] dataBytes = Arrays.copyOfRange(input, currentSize, currentSize + d.getSize());
+      currentSize = currentSize + d.getSize();
+      switch (d.type()) {
+        case INT:
+          IntDataBox intBox = new IntDataBox(dataBytes);
+          myList.add(intBox);
+          break;
+        case FLOAT:
+          FloatDataBox floatBox = new FloatDataBox(dataBytes);
+          myList.add(floatBox);
+          break;
+        case STRING:
+          StringDataBox stringBox = new StringDataBox(dataBytes);
+          myList.add(stringBox);
+          break;
+        case BOOL:
+          BoolDataBox boolBox = new BoolDataBox(dataBytes);
+          myList.add(boolBox);
+          break;
+      }
+    }
+
+//      }
+
+    Record newRecord = new Record(myList);
+    return newRecord;
   }
 
   public int getEntrySize() {
@@ -105,7 +168,7 @@ public class Schema {
         return false;
       }
 
-      if (thisType.type().equals(DataBox.Types.STRING) && thisType.getSize() != otherType.getSize()) {
+      if (thisType.type().equals(STRING) && thisType.getSize() != otherType.getSize()) {
         return false;
       }
     }

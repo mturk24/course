@@ -71,14 +71,14 @@ public class Table implements Iterable<Record>, Closeable {
 
     long freshCountRecords = 0;
 
-    while(pIter.hasNext()) {
+    while (pIter.hasNext()) {
       Page p = pIter.next();
 
       // add all records in this page to TableStats
       int entryNum = 0;
       byte[] header = this.readPageHeader(p);
       while (entryNum < this.getNumEntriesPerPage()) {
-        byte b = header[entryNum/8];
+        byte b = header[entryNum / 8];
         int bitOffset = 7 - (entryNum % 8);
         byte mask = (byte) (1 << bitOffset);
 
@@ -113,8 +113,8 @@ public class Table implements Iterable<Record>, Closeable {
   /**
    * This constructor is used for creating a table in some specified directory.
    *
-   * @param schema the schema for this table
-   * @param tableName the name of the table
+   * @param schema         the schema for this table
+   * @param tableName      the name of the table
    * @param filenamePrefix the prefix where the table's files will be created
    */
   public Table(Schema schema, String tableName, String filenamePrefix) {
@@ -136,7 +136,7 @@ public class Table implements Iterable<Record>, Closeable {
   }
 
   public Iterator<Record> iterator() {
-      return new TableIterator();
+    return new TableIterator();
   }
 
   /**
@@ -150,11 +150,74 @@ public class Table implements Iterable<Record>, Closeable {
    * @param values the values of the record being added
    * @return the RecordID of the added record
    * @throws DatabaseException if the values passed in to this method do not
-   *         correspond to the schema of this table
+   *                           correspond to the schema of this table
    */
+
   public RecordID addRecord(List<DataBox> values) throws DatabaseException {
     // TODO: implement me!
-    return null;
+    Page page;
+    int bitOffset = 0;
+    boolean flag = false;
+    int byteOffset = 0;
+    int writePosition = 0;
+    int found = 0;
+    int pageNum;
+
+    try {
+      Record newRecord = this.schema.verify(values);
+      if (!this.freePages.isEmpty()) {
+        pageNum = this.freePages.first();
+        page = this.allocator.fetchPage(pageNum);
+      } else {
+        pageNum = this.allocator.allocPage();
+        page = this.allocator.fetchPage(pageNum);
+        flag = true;
+      }
+      int currIndex = 0;
+      byte[] slot = this.readPageHeader(page);
+      writePosition = this.findBit(slot, currIndex, writePosition);
+      int entSize = schema.getEntrySize();
+      int position = this.pageHeaderSize + (entSize * writePosition);
+      page.writeBytes(position, entSize, schema.encode(newRecord));
+      this.numRecords += 1;
+      this.stats.addRecord(newRecord);
+      this.writeBitToHeader(page, writePosition, (byte) 1);
+      if (this.spaceOnPage(page) == true && flag) {
+        this.freePages.add(page.getPageNum());
+      }
+      if (this.spaceOnPage(page) == false && !flag) {
+        this.freePages.remove(page.getPageNum());
+      }
+      RecordID newID = new RecordID(pageNum, writePosition);
+      return newID;
+    } catch (Exception e) {
+      throw new DatabaseException(e);
+    }
+  }
+
+  /**
+   * Helper method to find the first available bit
+   */
+  public int findBit(byte[] slot, int currIndex, int writePosition) {
+    while (currIndex < this.pageHeaderSize) {
+      if (slot[currIndex] != -1) {
+        for (int entry = 0; entry < 8; ++entry) {
+          byte b = slot[currIndex];
+          int offsetByte;
+          offsetByte = 7 - (entry % 8);
+          byte mask = (byte) (1 << offsetByte);
+          byte value = (byte) (b & mask);
+          if (value == 0) {
+            writePosition = entry + (8 * currIndex);
+            break;
+          }
+        }
+        break;
+      } else {
+        currIndex += 1;
+      }
+    }
+    return writePosition;
   }
 
   /**
@@ -167,7 +230,24 @@ public class Table implements Iterable<Record>, Closeable {
    */
   public Record deleteRecord(RecordID rid) throws DatabaseException {
     // TODO: implement me!
-    return null;
+    try {
+      this.checkRecordIDValidity(rid);
+    } catch (Exception e) {
+      throw new DatabaseException(e);
+    }
+    Schema currSchema = this.getSchema();
+    int pageNum = rid.getPageNum();
+    int entryNumber = rid.getEntryNumber();
+    int size = currSchema.getEntrySize();
+    int indexOffset = this.pageHeaderSize + (entryNumber * size);
+    Page fetchedPage = this.allocator.fetchPage(pageNum);
+    byte[] allBytes = fetchedPage.readBytes(indexOffset, size);
+    Record newRecord = new Record(currSchema.decode(allBytes).getValues());
+    this.freePages.add(pageNum);
+    this.numRecords -= 1;
+    this.stats.removeRecord(newRecord);
+    this.writeBitToHeader(fetchedPage, entryNumber, (byte) 0);
+    return newRecord;
   }
 
   /**
@@ -179,7 +259,16 @@ public class Table implements Iterable<Record>, Closeable {
    */
   public Record getRecord(RecordID rid) throws DatabaseException {
     // TODO: implement me!
-    return null;
+    if (!checkRecordIDValidity(rid)) {
+      throw new DatabaseException("The rid does not correspond to a valid record");
+    } else {
+      int entryNum = rid.getEntryNumber();
+      Page page = this.allocator.fetchPage(rid.getPageNum());
+      Schema mySchema = this.getSchema();
+      byte[] myBytes = page.readBytes(this.pageHeaderSize + entryNum * mySchema.getEntrySize(), mySchema.getEntrySize());
+      Record newRecord = mySchema.decode(myBytes);
+      return newRecord;
+    }
   }
 
   /**
@@ -187,14 +276,31 @@ public class Table implements Iterable<Record>, Closeable {
    * Make sure to update this.stats as necessary.
    *
    * @param values the new values of the record
-   * @param rid the RecordID of the record to update
+   * @param rid    the RecordID of the record to update
    * @return the old version of the record
    * @throws DatabaseException if rid does not correspond to a valid record or
-   *         if the values do not correspond to the schema of this table
+   *                           if the values do not correspond to the schema of this table
    */
   public Record updateRecord(List<DataBox> values, RecordID rid) throws DatabaseException {
     // TODO: implement me!
-    return null;
+
+    if (!checkRecordIDValidity(rid)) {
+      throw new DatabaseException("The rid does not correspond to a valid record");
+    } else {
+      Record oldRecord = new Record(values);
+      Schema currSchema = this.getSchema();
+      int pageNum = rid.getPageNum();
+      int entryNumber = rid.getEntryNumber();
+      int size = currSchema.getEntrySize();
+      int indexOffset = this.pageHeaderSize + (entryNumber * size);
+      Page fetchedPage = this.allocator.fetchPage(pageNum);
+      Record newRecord = this.getRecord(rid);
+      byte[] encoding = currSchema.encode(newRecord);
+      fetchedPage.writeBytes(indexOffset, size, encoding);
+      this.stats.removeRecord(oldRecord);
+      this.stats.addRecord(newRecord);
+      return oldRecord;
+    }
   }
 
   public int getNumEntriesPerPage() {
@@ -216,8 +322,19 @@ public class Table implements Iterable<Record>, Closeable {
    */
   private boolean checkRecordIDValidity(RecordID rid) throws DatabaseException {
     // TODO: implement me!
-    return false;
+    try {
+      Page page = this.allocator.fetchPage(rid.getPageNum());
+      byte[] slot = readPageHeader(page);
+      int byteOffset = rid.getEntryNumber() / 8;
+      int bitOffset = rid.getEntryNumber() % 8;
+      byte b = (byte) (readPageHeader(page)[byteOffset] & (byte)
+              (0x1 << 8 - (bitOffset) - 1));
+      return b != 0;
+    } catch (Exception e) {
+      throw new DatabaseException(e);
+    }
   }
+
 
   /**
    * Based on the Schema known to this table, calculates the number of record
@@ -225,11 +342,24 @@ public class Table implements Iterable<Record>, Closeable {
    * The page header only contains the slot bitmap and takes up no other space.
    * For ease of calculations and to prevent header byte splitting, ensure that
    * `numEntriesPerPage` is a multiple of 8 (this may waste some space).
-   *
+   * <p>
    * Should set this.pageHeaderSize and this.numEntriesPerPage.
    */
   private void setEntryCounts() {
     // TODO: implement me!
+    Schema currSchema = this.getSchema();
+    int pageBits = Page.pageSize * 8;
+    int recordBits = currSchema.getEntrySize() * 8;
+    int tempEntries = pageBits / (recordBits + 1);
+    if (tempEntries % 8 == 0) {
+      this.numEntriesPerPage = tempEntries;
+    } else {
+      while (tempEntries % 8 != 0) {
+        tempEntries -= 1;
+      }
+      this.numEntriesPerPage = tempEntries;
+    }
+    this.pageHeaderSize = this.numEntriesPerPage / 8;
   }
 
   /**
@@ -259,7 +389,6 @@ public class Table implements Iterable<Record>, Closeable {
   private int numValidEntries(Page p) {
     byte[] header = this.readPageHeader(p);
     int count = 0;
-
     for (byte b : header) {
       for (int mask = 0x01; mask != 0x100; mask <<= 1) {
         if ((b & (byte) mask) != 0) {
@@ -267,7 +396,6 @@ public class Table implements Iterable<Record>, Closeable {
         }
       }
     }
-
     return count;
   }
 
@@ -279,7 +407,7 @@ public class Table implements Iterable<Record>, Closeable {
     int numBytesWritten = 0;
     Page headerPage = this.allocator.fetchPage(this.allocator.allocPage());
 
-    assert(0 == headerPage.getPageNum());
+    assert (0 == headerPage.getPageNum());
 
     List<String> fieldNames = this.schema.getFieldNames();
     headerPage.writeBytes(numBytesWritten, 4, ByteBuffer.allocate(4).putInt(fieldNames.size()).array());
@@ -336,7 +464,7 @@ public class Table implements Iterable<Record>, Closeable {
       DataBox.Types type = DataBox.Types.values()[ordinal];
       numBytesRead += 4;
 
-      switch(type) {
+      switch (type) {
         case INT:
           fieldTypes.add(new IntDataBox());
           break;
@@ -362,9 +490,9 @@ public class Table implements Iterable<Record>, Closeable {
   /**
    * Utility method to write a particular bit into the header of a particular page.
    *
-   * @param page the page to modify
+   * @param page     the page to modify
    * @param entryNum the header slot to modify
-   * @param value the value of the bit to write (should either be 0 or 1)
+   * @param value    the value of the bit to write (should either be 0 or 1)
    */
   private void writeBitToHeader(Page page, int entryNum, byte value) {
     byte[] header = this.readPageHeader(page);
@@ -395,14 +523,33 @@ public class Table implements Iterable<Record>, Closeable {
     return page.readBytes(0, this.pageHeaderSize);
   }
 
-  /**
+    /**
    * An implementation of Iterator that provides an iterator interface over all
    * of the records in this table.
    */
   private class TableIterator implements Iterator<Record> {
+    private Iterator<Page> pageIterator = Table.this.allocator.iterator();
+    private int numTablesPP = Table.this.numEntriesPerPage;
+    private int headSize = Table.this.pageHeaderSize;
+    private Page currPage;
+    private byte[] slot;
+    private Schema mySchema = Table.this.getSchema();
+    private long numRecords;
+    private int currEntry;
+    private int entryNumber;
+    private int sizeOfEntry = mySchema.getEntrySize();
+    private boolean flag = false;
+//    private Page myPage = pageIterator.next();
 
     public TableIterator() {
       // TODO: implement me!
+      if (pageIterator.next().getPageNum() == 0) {
+        if (this.pageIterator.hasNext()) {
+          this.currPage = this.pageIterator.next();
+          this.slot = Table.this.readPageHeader(this.currPage);
+        }
+        this.entryNumber = 0;
+      }
     }
 
     /**
@@ -412,8 +559,12 @@ public class Table implements Iterable<Record>, Closeable {
      */
     public boolean hasNext() {
       // TODO: implement me!
-      return false;
-    }
+      if ((this.numRecords < Table.this.numRecords) && (this.currPage != null)) {
+        return true;
+      } else {
+          return false;
+        }
+      }
 
     /**
      * Yields the next record of this iterator.
@@ -423,7 +574,29 @@ public class Table implements Iterable<Record>, Closeable {
      */
     public Record next() {
       // TODO: implement me!
-      return null;
+      while (this.hasNext() != this.flag) {
+        while (this.entryNumber < this.numTablesPP) {
+          currEntry = this.entryNumber;
+          int bitOffset = 7 - (currEntry % 8);
+          byte bitMask = (byte) (1 << bitOffset);
+          byte val = (byte) (this.slot[currEntry / 8] & bitMask);
+          if (val != 0) {
+            byte[] currBytes = this.currPage.readBytes(this.headSize + (this.sizeOfEntry * currEntry), this.sizeOfEntry);
+            Record currRecord = this.mySchema.decode(currBytes);
+            this.numRecords += 1;
+            this.entryNumber += 1;
+            return currRecord;
+          }
+          this.entryNumber += 1;
+        }
+        if (this.hasNext() != flag) {
+          this.currPage = this.pageIterator.next();
+          this.slot = Table.this.readPageHeader(this.currPage);
+          this.entryNumber = 0;
+          this.flag = false;
+        }
+      }
+      throw new NoSuchElementException(); //happens if we don't return record by now
     }
 
     public void remove() {
@@ -431,3 +604,4 @@ public class Table implements Iterable<Record>, Closeable {
     }
   }
 }
+
